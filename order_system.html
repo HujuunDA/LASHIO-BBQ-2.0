@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🍢 烧烤订单计算器 - 实时订单 (Supabase 同步)</title>
+    
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+    <style>
+        /* CSS 样式 (保持不变) */
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f4; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; background-color: #fff; padding: 20px; box-shadow: 0 0 15px rgba(0, 0, 0, 0.1); border-radius: 8px; display: flex; gap: 20px; flex-wrap: wrap; }
+        .section { padding: 15px; border-radius: 6px; background-color: #fefefe; border: 1px solid #ddd; }
+        h2 { color: #a04000; border-bottom: 2px solid #ff9933; padding-bottom: 5px; margin-top: 0; }
+        
+        /* 菜单区 */
+        #menu-section { flex: 3; min-width: 300px; }
+        #category-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid #ff9933; margin-bottom: 10px; }
+        .category-button { background-color: #f0f0f0; border: none; padding: 10px 15px; cursor: pointer; margin-right: 5px; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; white-space: nowrap; }
+        .category-button.active { background-color: #ffaa55; color: white; border: 1px solid #ff9933; border-bottom: none; margin-bottom: -1px; }
+
+        .menu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 10px; }
+        .menu-item { background-color: #ffaa55; color: white; border: none; padding: 15px 10px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; text-align: center; line-height: 1.3; transition: background-color 0.2s; }
+        .menu-item:hover { background-color: #ff8833; }
+
+        /* 订单区 - 保持不变 */
+        #order-container { flex: 2; min-width: 280px; display: flex; flex-direction: column; }
+        #order-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid #ccc; margin-bottom: 10px; }
+        .tab-button { background-color: #e0e0e0; border: none; padding: 10px 15px; cursor: pointer; margin-right: 5px; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; white-space: nowrap; }
+        .tab-button.active { background-color: #fff; border: 1px solid #ccc; border-bottom: none; margin-bottom: -1px; color: #a04000; }
+        
+        #order-list { list-style: none; padding: 0; margin: 15px 0; }
+        .order-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px dashed #eee; font-size: 15px; }
+        .item-name { flex-grow: 1; font-weight: bold; }
+        .quantity-controls { display: flex; align-items: center; margin: 0 10px; }
+        .qty-btn { background-color: #a04000; color: white; border: none; width: 25px; height: 25px; border-radius: 4px; cursor: pointer; font-size: 16px; line-height: 1; padding: 0; }
+        .qty-btn:hover { background-color: #7a3000; }
+        .item-qty { margin: 0 10px; width: 20px; text-align: center; font-weight: bold; }
+        .item-subtotal { min-width: 60px; text-align: right; font-weight: bold; color: #d9534f; }
+        .empty-message { text-align: center; color: #888; padding: 20px 0; }
+
+        .total-box { text-align: right; font-size: 24px; font-weight: bold; padding: 10px 0; border-top: 2px solid #ff9933; margin-top: 15px; color: #a04000; }
+        #clear-order-btn { width: 100%; padding: 10px; background-color: #d9534f; color: white; border: none; border-radius: 5px; font-size: 18px; cursor: pointer; margin-top: 10px; }
+        #clear-order-btn:disabled { background-color: #ccc; cursor: not-allowed; }
+        
+        .top-links a { margin-left: 10px; font-size: 14px; color: #007bff; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div id="menu-section" class="section">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2>🔥 菜单</h2>
+                <div class="top-links">
+                    <a href="menu_editor.html">⚙️ 编辑菜单]</a>
+                    <a href="history_report.html">[📊 查看报告]</a>
+                </div>
+            </div>
+
+            <div id="category-tabs">
+                <p>正在连接数据...</p>
+            </div>
+
+            <div id="menu-items" class="menu-grid">
+                <p style="text-align: center; color: #888;">正在加载菜单项...</p>
+            </div>
+        </div>
+
+        <div id="order-container">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div id="order-tabs">
+                </div>
+            </div>
+            
+            <div id="order-section" class="section">
+                <h2>📝 订单 (<span id="current-customer-name">桌号 1</span>)</h2>
+                <ul id="order-list">
+                    <li class="empty-message">暂无订单，请从菜单添加项目。</li>
+                </ul>
+
+                <div class="total-box">
+                    总计: <span id="total-amount">0</span> Ks
+                </div>
+                
+                <button id="clear-order-btn" class="action-btn clear-btn" disabled>清空当前订单 (已结账)</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================================
+        // !!! 请将您的 Supabase URL 和 KEY 粘贴到这里 !!!
+        // SUPABASE_URL: https://hicmcqieruonxrdmvme.supabase.co
+        // SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhpY2VtY3FpZXJ1b254cmRtdm1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODczODIsImV4cCI6MjA3Nzc2MzM4Mn0.TLHoQOz_eeec1YISCFogeJeM-y2_EebiJh3zikH9Jys
+        // ==========================================================
+        const SUPABASE_URL = "https://hicmcqieruonxrdmvme.supabase.co"; 
+        const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhpY2VtY3FpZXJ1b254cmRtdm1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODczODIsImV4cCI6MjA3Nzc2MzM4Mn0.TLHoQOz_eeec1YISCFogeJeM-y2_EebiJh3zikH9Jys"; 
+        
+        // 初始化 Supabase 客户端
+        const supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        // ==========================================================
+
+        const FIXED_TABLE_COUNT = 10;
+        
+        // 数据变量 (现在这些变量由 Supabase 实时同步)
+        let menuItems = [];
+        let allOrders = {};
+        let currentTable = ''; 
+        
+        // 声音设置
+        const addItemSound = new Audio('add.mp3'); 
+        const removeItemSound = new Audio('remove.mp3'); 
+        const checkoutSound = new Audio('checkout.mp3'); 
+
+        // DOM 元素 (不变)
+        const orderList = document.getElementById('order-list');
+        const totalAmountSpan = document.getElementById('total-amount');
+        const menuItemsContainer = document.getElementById('menu-items');
+        const clearOrderButton = document.getElementById('clear-order-btn');
+        const orderTabsContainer = document.getElementById('order-tabs');
+        const currentTableNameSpan = document.getElementById('current-customer-name'); 
+        const categoryTabsContainer = document.getElementById('category-tabs'); 
+
+        let currentCategory = ''; 
+        let isInitialLoad = true; 
+
+        // --- Supabase 数据同步函数 ---
+        
+        /**
+         * 1. 启动订单数据的实时监听
+         * 当任何设备更改订单时，所有设备立即更新
+         */
+        function subscribeToOrders() {
+             // 订阅 'all_orders' 表格的任何变化 (INSERT, UPDATE, DELETE)
+            supabase
+                .channel('public:all_orders') 
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'all_orders' }, payload => {
+                    console.log('订单实时更新收到:', payload);
+                    // 收到更新通知后，重新从数据库拉取最新订单数据
+                    loadOrdersFromDB(true); 
+                })
+                .subscribe();
+
+            // 首次加载和初始化
+            loadOrdersFromDB(false);
+        }
+
+        /**
+         * 2. 从 Supabase 读取菜单数据
+         */
+        async function loadMenuFromDB() {
+            const { data, error } = await supabase
+                .from('menu_items')
+                .select('id, name, price, category'); // 明确选择需要的字段
+
+            if (error) {
+                console.error("加载菜单失败:", error);
+                menuItemsContainer.innerHTML = `<p style="color: red;">加载菜单失败，请检查网络和 Supabase 配置。</p>`;
+                return;
+            }
+
+            menuItems = data || [];
+
+            // 首次加载时设置默认分类
+            if (menuItems.length > 0 && isInitialLoad) {
+                const categories = getUniqueCategories();
+                currentCategory = categories[0] || '';
+            }
+            
+            renderCategoryTabs();
+            renderMenu();
+        }
+
+        /**
+         * 3. 从 Supabase 读取订单数据
+         */
+        async function loadOrdersFromDB(isRealtimeUpdate) {
+            const { data, error } = await supabase
+                .from('all_orders')
+                .select('table_name, order_data')
+                .limit(FIXED_TABLE_COUNT);
+
+            if (error) {
+                console.error("加载订单失败:", error);
+                return;
+            }
+
+            // 将 Supabase 返回的数组转换为我们需要的 { "桌号 1": {...}, ... } 结构
+            let newAllOrders = {};
+            data.forEach(row => {
+                newAllOrders[row.table_name] = row.order_data || {};
+            });
+            
+            // 初始化或合并 10 个桌号（如果数据库中没有，则创建空订单）
+            let shouldUpdateDB = false;
+            for (let i = 1; i <= FIXED_TABLE_COUNT; i++) {
+                const tableName = `桌号 ${i}`;
+                if (!newAllOrders.hasOwnProperty(tableName)) {
+                    newAllOrders[tableName] = {};
+                    shouldUpdateDB = true;
+                }
+            }
+
+            allOrders = newAllOrders;
+            
+            // 首次加载时设置当前桌号
+            if (!isRealtimeUpdate && !currentTable) {
+                 const allTableKeys = Object.keys(allOrders).sort((a, b) => {
+                    const numA = parseInt(a.replace('桌号 ', ''));
+                    const numB = parseInt(b.replace('桌号 ', ''));
+                    return numA - numB;
+                });
+                currentTable = allTableKeys[0] || `桌号 1`;
+                isInitialLoad = false;
+            }
+
+            // 如果发现有桌号缺失，则将其写入数据库（避免循环，只写入缺失的部分）
+            if (shouldUpdateDB) {
+                const tablesToUpsert = [];
+                 for (let i = 1; i <= FIXED_TABLE_COUNT; i++) {
+                    const tableName = `桌号 ${i}`;
+                    tablesToUpsert.push({
+                         table_name: tableName,
+                         order_data: allOrders[tableName] || {}
+                    });
+                }
+                saveAllOrdersToDB(tablesToUpsert); 
+            }
+
+            renderOrderTabs();
+            renderOrder();
+        }
+
+
+        /**
+         * 4. 保存单个桌号的订单到 Supabase (关键保存逻辑)
+         */
+        async function saveOrderToDB(tableName) {
+            const orderToSave = {
+                table_name: tableName, 
+                order_data: allOrders[tableName] || {} 
+            };
+            
+            // 使用 upsert 插入或更新，table_name 必须是唯一的 (Primary Key)
+            const { error } = await supabase
+                .from('all_orders')
+                .upsert(orderToSave, { onConflict: 'table_name' });
+
+            if (error) {
+                console.error("订单保存失败:", error);
+                alert("订单保存到云端失败，请检查网络！");
+            }
+        }
+
+        /**
+         * 5. 批量保存所有桌号（用于初始化缺失数据）
+         */
+        async function saveAllOrdersToDB(dataToUpsert) {
+            const { error } = await supabase
+                .from('all_orders')
+                .upsert(dataToUpsert, { onConflict: 'table_name' });
+
+            if (error) {
+                console.error("初始化所有订单失败:", error);
+            }
+        }
+
+        /**
+         * 6. 保存历史记录到 Supabase
+         */
+        async function saveHistoryToDB(historyEntry) {
+             const { error } = await supabase
+                .from('history_records')
+                .insert([historyEntry]);
+
+            if (error) {
+                console.error("历史记录保存失败:", error);
+            }
+        }
+
+
+        // --- 核心订单操作函数 (修改为调用 Supabase 保存) ---
+
+        function addItemToOrder(itemId) {
+            const itemData = menuItems.find(item => item.id === itemId);
+            if (!itemData) return;
+            const order = allOrders[currentTable];
+            // 确保保存到订单的数据包含 name, price, category
+            const itemToSave = { 
+                id: itemData.id, 
+                name: itemData.name, 
+                price: itemData.price, 
+                category: itemData.category 
+            };
+
+            order[itemId] = order[itemId] ? {...order[itemId], quantity: order[itemId].quantity + 1} : { itemData: itemToSave, quantity: 1 };
+            
+            // 调用 Supabase 保存
+            saveOrderToDB(currentTable); 
+
+            // 声音反馈
+            addItemSound.play().catch(e => console.log('无法播放添加声音:', e)); 
+        }
+
+        function decreaseItemQuantity(itemId) {
+            const order = allOrders[currentTable];
+            if (order[itemId]) {
+                order[itemId].quantity -= 1;
+                const isRemoved = order[itemId].quantity <= 0;
+                if (isRemoved) {
+                    delete order[itemId];
+                }
+
+                // 调用 Supabase 保存
+                saveOrderToDB(currentTable); 
+                
+                // 声音反馈
+                removeItemSound.play().catch(e => console.log('无法播放移除声音:', e));
+            }
+        }
+
+        function clearOrder() {
+            const orderData = allOrders[currentTable];
+            if (Object.keys(orderData).length > 0) {
+                const total = calculateTotal(); 
+                
+                // 1. 创建历史记录对象
+                const historyEntry = {
+                    customer: currentTable, 
+                    total_amount: total,
+                    items: JSON.parse(JSON.stringify(orderData)), 
+                    // Supabase 推荐使用 ISO 格式
+                    timestamp: new Date().toISOString(), 
+                };
+
+                // 2. 保存历史记录到 Supabase
+                saveHistoryToDB(historyEntry);
+
+                alert(`已完成 ${currentTable} 的订单，总金额: ${total.toFixed(0)} Ks。订单已记录。`);
+                checkoutSound.play().catch(e => console.log('无法播放结账声音:', e));
+            }
+            
+            // 3. 清空订单并保存到 Supabase
+            allOrders[currentTable] = {};
+            saveOrderToDB(currentTable);
+            // 界面刷新由实时监听触发
+        }
+
+        // --- 菜单和订单渲染/逻辑函数 (保持不变) ---
+
+        function calculateTotal() {
+            const order = allOrders[currentTable] || {};
+            let total = 0;
+            for (const itemId in order) {
+                const item = order[itemId];
+                // 使用订单中缓存的 price 计算，或者如果菜单加载了则使用最新的 price
+                const currentItemData = menuItems.find(m => m.id === item.itemData.id);
+                const price = currentItemData ? currentItemData.price : item.itemData.price;
+                total += price * item.quantity;
+            }
+            totalAmountSpan.textContent = total.toFixed(0);
+            clearOrderButton.disabled = total === 0;
+            return total;
+        }
+
+        function switchCategory(categoryName) {
+            currentCategory = categoryName;
+            renderCategoryTabs();
+            renderMenu();
+        }
+        
+        function getUniqueCategories() {
+            return [...new Set(menuItems.map(item => item.category || '未分类'))].sort();
+        }
+
+        function renderCategoryTabs() {
+            categoryTabsContainer.innerHTML = '';
+            const categories = getUniqueCategories();
+
+            if (categories.length === 0) {
+                 categoryTabsContainer.innerHTML = `<p style="color:#d9534f; padding: 10px 0;">菜单为空，请先在 [编辑菜单] 中添加分类。</p>`;
+                 return;
+            }
+
+            categories.forEach(category => {
+                const button = document.createElement('button');
+                button.className = 'category-button';
+                button.textContent = category;
+                
+                if (category === currentCategory) {
+                    button.classList.add('active');
+                }
+                
+                button.addEventListener('click', () => switchCategory(category));
+                categoryTabsContainer.appendChild(button);
+            });
+        }
+        
+        function renderMenu() {
+            menuItemsContainer.innerHTML = '';
+            
+            if (menuItems.length === 0 || !currentCategory) {
+                 const message = menuItems.length === 0 ? "菜单为空！请点击 [编辑菜单] 添加项目。" : "请选择一个分类。";
+                 menuItemsContainer.innerHTML = `<p style="text-align: center; color: #888;">${message}</p>`;
+                 return;
+            }
+
+            const itemsToDisplay = menuItems.filter(item => (item.category || '未分类') === currentCategory);
+
+            if (itemsToDisplay.length === 0) {
+                 menuItemsContainer.innerHTML = `<p style="text-align: center; color: #888;">当前分类下暂无菜单项。</p>`;
+                 return;
+            }
+
+            itemsToDisplay.forEach(item => {
+                const button = document.createElement('button');
+                button.className = 'menu-item';
+                button.dataset.id = item.id;
+                button.innerHTML = `${item.name} <br> (${item.price.toFixed(0)} Ks)`;
+                button.addEventListener('click', () => addItemToOrder(item.id));
+                menuItemsContainer.appendChild(button);
+            });
+        }
+
+        function renderOrder() {
+            const order = allOrders[currentTable] || {};
+            orderList.innerHTML = ''; 
+            currentTableNameSpan.textContent = currentTable; 
+
+            const itemIds = Object.keys(order);
+            
+            if (itemIds.length === 0) {
+                orderList.innerHTML = `<li class="empty-message">暂无订单，请从菜单添加项目。</li>`;
+            } else {
+                itemIds.forEach(itemId => {
+                    const item = order[itemId];
+                    const li = document.createElement('li');
+                    li.className = 'order-item';
+                    
+                    const currentItemData = menuItems.find(m => m.id === item.itemData.id);
+                    const price = currentItemData ? currentItemData.price : item.itemData.price;
+                    const subtotal = price * item.quantity;
+
+                    li.innerHTML = `
+                        <span class="item-name">${item.itemData.name}</span>
+                        <span class="item-price">(${price.toFixed(0)} Ks/份)</span>
+                        <div class="quantity-controls">
+                            <button data-id="${itemId}" class="qty-btn minus-btn">-</button>
+                            <span class="item-qty">${item.quantity}</span>
+                            <button data-id="${itemId}" class="qty-btn plus-btn">+</button>
+                        </div>
+                        <span class="item-subtotal">${subtotal.toFixed(0)} Ks</span>
+                    `;
+                    orderList.appendChild(li);
+                });
+                
+                document.querySelectorAll('.qty-btn').forEach(button => {
+                    button.addEventListener('click', (e) => {
+                        const id = parseInt(e.currentTarget.dataset.id); 
+                        if (e.currentTarget.classList.contains('plus-btn')) {
+                            addItemToOrder(id);
+                        } else if (e.currentTarget.classList.contains('minus-btn')) {
+                            decreaseItemQuantity(id);
+                        }
+                    });
+                });
+            }
+            calculateTotal(); 
+        }
+
+        function switchTable(tableName) {
+            currentTable = tableName;
+            renderOrderTabs();
+            renderOrder();
+        }
+
+        function renderOrderTabs() {
+            orderTabsContainer.innerHTML = '';
+            
+            for (let i = 1; i <= FIXED_TABLE_COUNT; i++) {
+                const tableName = `桌号 ${i}`;
+                const button = document.createElement('button');
+                button.className = 'tab-button';
+                
+                const hasOrder = allOrders[tableName] && Object.keys(allOrders[tableName]).length > 0;
+
+                if (tableName === currentTable) {
+                    button.classList.add('active');
+                }
+                
+                button.textContent = hasOrder ? `${tableName} *` : tableName;
+                
+                button.addEventListener('click', () => switchTable(tableName));
+                orderTabsContainer.appendChild(button);
+            }
+        }
+        
+        // --- 初始化 ---
+        document.addEventListener('DOMContentLoaded', () => {
+            // 加载菜单 (不需要实时同步)
+            loadMenuFromDB(); 
+            // 订阅订单 (实时同步)
+            subscribeToOrders(); 
+            
+            clearOrderButton.addEventListener('click', clearOrder);
+        });
+    </script>
+</body>
+</html>

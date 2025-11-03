@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚙️ 菜单管理中心 (Supabase 同步)</title>
+    
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f4; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
+        h2 { color: #a04000; border-bottom: 2px solid #ff9933; padding-bottom: 5px; margin-top: 0; }
+        
+        /* 表单布局 */
+        .control-group { margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap; }
+        .control-group input, .control-group select { padding: 10px; border: 1px solid #ccc; border-radius: 4px; flex-grow: 1; min-width: 120px; }
+        .btn { padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        #add-menu-item-btn { background-color: #5cb85c; color: white; flex-grow: 0; }
+        #add-menu-item-btn:hover { background-color: #4cae4c; }
+
+        /* 列表展示 */
+        .category-group { margin-top: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        .category-group h4 { margin-top: 0; color: #a04000; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        #menu-list { list-style: none; padding: 0; margin-top: 0; }
+        .menu-item-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px dashed #eee; }
+        .menu-item-row:last-child { border-bottom: none; }
+        .menu-item-row span { flex-grow: 1; }
+        .delete-btn { background-color: #d9534f; color: white; margin-left: 10px; }
+        .delete-btn:hover { background-color: #c9302c; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>⚙️ 菜单管理中心</h2>
+        
+        <h3>添加新菜单项</h3>
+        <div class="control-group">
+            <input type="text" id="new-item-name" placeholder="菜单名称 (如：土豆片)">
+            <input type="number" id="new-item-price" placeholder="价格 (Ks)" step="1">
+            <input type="text" id="new-item-category" placeholder="分类 (如：肉类/素菜)">
+            <button id="add-menu-item-btn" class="btn">添加</button>
+        </div>
+        <p id="menu-message" style="color:red; margin-top: 5px;"></p>
+
+        <h3>当前菜单列表 (按分类)</h3>
+        <div id="menu-list">
+            <p>加载中...</p>
+        </div>
+        
+        <hr style="margin-top: 20px;">
+        <p>
+            <a href="order_system.html">返回订单系统</a>
+        </p>
+    </div>
+
+    <script>
+        // ==========================================================
+        // !!! 请将您的 Supabase URL 和 KEY 粘贴到这里 !!!
+        // SUPABASE_URL: https://hicmcqieruonxrdmvme.supabase.co
+        // SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhpY2VtY3FpZXJ1b254cmRtdm1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODczODIsImV4cCI6MjA3Nzc2MzM4Mn0.TLHoQOz_eeec1YISCFogeJeM-y2_EebiJh3zikH9Jys
+        // ==========================================================
+        const SUPABASE_URL = "https://hicmcqieruonxrdmvme.supabase.co"; 
+        const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhpY2VtY3FpZXJ1b254cmRtdm1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODczODIsImV4cCI6MjA3Nzc2MzM4Mn0.TLHoQOz_eeec1YISCFogeJeM-y2_EebiJh3zikH9Jys"; 
+        
+        // 初始化 Supabase 客户端
+        const supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        // ==========================================================
+        
+        const nameInput = document.getElementById('new-item-name');
+        const priceInput = document.getElementById('new-item-price');
+        const categoryInput = document.getElementById('new-item-category');
+        const addButton = document.getElementById('add-menu-item-btn');
+        const menuListContainer = document.getElementById('menu-list');
+        const menuMessage = document.getElementById('menu-message');
+
+        let menuItems = [];
+
+        // --- Supabase 数据读写函数 ---
+        
+        /**
+         * 1. 从 Supabase 加载菜单
+         */
+        async function loadMenuItems() {
+            const { data, error } = await supabase
+                .from('menu_items')
+                .select('*')
+                .order('category', { ascending: true }) // 按分类排序
+                .order('id', { ascending: true });      // 再按 ID 排序
+
+            if (error) {
+                console.error("加载菜单失败:", error);
+                menuListContainer.innerHTML = `<p style="color: red;">加载菜单失败，请检查网络和 Supabase 配置。</p>`;
+                return;
+            }
+            
+            menuItems = data || [];
+            renderMenuList();
+        }
+
+        /**
+         * 2. 保存/更新单个菜单项到 Supabase
+         */
+        async function saveMenuItem(newItem) {
+            // Supabase 会自动处理 ID 增长
+            const { error } = await supabase
+                .from('menu_items')
+                .insert(newItem);
+
+            if (error) {
+                console.error("添加菜单项失败:", error);
+                menuMessage.textContent = '添加失败，请检查 Supabase 表格和权限设置。';
+                return false;
+            }
+            return true;
+        }
+
+        /**
+         * 3. 从 Supabase 删除菜单项
+         */
+        async function deleteMenuItemFromDB(id) {
+            const { error } = await supabase
+                .from('menu_items')
+                .delete()
+                .eq('id', id); // 匹配 ID
+
+            if (error) {
+                console.error("删除菜单项失败:", error);
+                return false;
+            }
+            return true;
+        }
+        
+        // --- 核心操作函数 ---
+
+        function renderMenuList() {
+            menuListContainer.innerHTML = '';
+            
+            const categorizedItems = menuItems.reduce((acc, item) => {
+                const category = item.category || '未分类';
+                if (!acc[category]) {
+                    acc[category] = [];
+                }
+                acc[category].push(item);
+                return acc;
+            }, {});
+
+            const categories = Object.keys(categorizedItems).sort();
+            
+            if (categories.length === 0) {
+                menuListContainer.innerHTML = `<p style="text-align: center; color: #888;">暂无菜单项。</p>`;
+                return;
+            }
+
+            categories.forEach(category => {
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'category-group';
+                
+                groupDiv.innerHTML = `<h4>${category}</h4><ul class="menu-list-ul"></ul>`;
+                const ul = groupDiv.querySelector('.menu-list-ul');
+
+                categorizedItems[category].forEach(item => {
+                    const li = document.createElement('li');
+                    li.className = 'menu-item-row';
+                    // 确保 ID 是正确的，以便删除
+                    li.innerHTML = `
+                        <span>${item.name} (${item.price.toFixed(0)} Ks)</span>
+                        <button data-id="${item.id}" class="btn delete-btn">删除</button>
+                    `;
+                    ul.appendChild(li);
+                });
+                
+                menuListContainer.appendChild(groupDiv);
+            });
+
+            document.querySelectorAll('.delete-btn').forEach(button => {
+                button.addEventListener('click', async (e) => {
+                    // ID 必须是数字类型
+                    const id = parseInt(e.currentTarget.dataset.id); 
+                    await deleteMenuItem(id);
+                });
+            });
+        }
+
+        async function deleteMenuItem(id) {
+            const success = await deleteMenuItemFromDB(id);
+            if (success) {
+                // 成功后重新加载列表
+                await loadMenuItems();
+            }
+        }
+
+        async function addNewMenuItem() {
+            const name = nameInput.value.trim();
+            const price = parseFloat(priceInput.value);
+            const category = categoryInput.value.trim(); 
+
+            menuMessage.textContent = ''; 
+            menuMessage.style.color = 'red';
+
+            if (!name) { menuMessage.textContent = '请输入菜单名称。'; return; }
+            if (isNaN(price) || price <= 0) { menuMessage.textContent = '请输入有效的价格。'; return; }
+            if (!category) { menuMessage.textContent = '请输入菜单分类 (如：肉类)。'; return; }
+            if (menuItems.some(item => item.name === name)) { menuMessage.textContent = `菜单中已存在"${name}"。`; return; }
+
+            const newItem = {
+                name: name,
+                price: price,
+                category: category 
+            };
+            
+            // 保存到 Supabase
+            const success = await saveMenuItem(newItem);
+
+            if (success) {
+                // 清空输入框并更新列表
+                nameInput.value = '';
+                priceInput.value = '';
+                categoryInput.value = ''; 
+                await loadMenuItems();
+                
+                menuMessage.textContent = `成功添加: ${name} (${price.toFixed(0)} Ks) [分类: ${category}]`;
+                menuMessage.style.color = 'green';
+            }
+        }
+
+        // --- 初始化 ---
+        document.addEventListener('DOMContentLoaded', () => {
+            loadMenuItems(); // 首次加载菜单
+            addButton.addEventListener('click', addNewMenuItem);
+        });
+    </script>
+</body>
+</html>
