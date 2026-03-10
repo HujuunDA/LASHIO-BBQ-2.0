@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>菜单管理-Firebase版</title>
+    <script src="firebase-app-compat.js"></script>
+<script src="firebase-firestore-compat.js"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; margin: 0; padding-top: 60px; background-color: #f4f4f4; }
+        .header-bar { background-color: #FF8C00; color: white; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; position: fixed; top: 0; width: 100%; z-index: 10; box-sizing: border-box; }
+        .header-bar h2 { margin: 0; font-size: 18px; }
+        .btn-group { display: flex; gap: 6px; }
+        .header-bar button { background: rgba(255,255,255,0.2); color: white; border: none; padding: 8px 10px; border-radius: 6px; font-size: 13px; font-weight: 600; }
+        .menu-list { padding: 15px; padding-bottom: 80px; }
+        .category-block { margin-bottom: 20px; }
+        .category-title { font-size: 16px; color: #FF8C00; font-weight: 800; margin-bottom: 10px; border-left: 4px solid #FF8C00; padding-left: 8px; }
+        .menu-item-card { background: white; border-radius: 12px; padding: 15px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.03); }
+        .item-info .name { font-size: 16px; font-weight: 600; }
+        .item-info .price { font-size: 14px; color: #888; }
+        .actions button { margin-left: 8px; padding: 6px 12px; border: none; border-radius: 6px; font-size: 13px; }
+        .edit-btn { background-color: #fff3e0; color: #FF8C00; }
+        .delete-btn { background-color: #ffebee; color: #d32f2f; }
+        .fab-add { position: fixed; bottom: 30px; right: 20px; background: #FF4500; color: white; width: 56px; height: 56px; border-radius: 50%; border: none; font-size: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
+        .modal-content { background: white; padding: 25px; border-radius: 16px; width: 85%; max-width: 320px; }
+        input, select { width: 100%; padding: 12px; margin: 8px 0 15px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+        .modal-actions { display: flex; gap: 10px; }
+        .modal-actions button { flex: 1; padding: 12px; border-radius: 8px; border: none; font-weight: bold; }
+        #saveIndicator { position: fixed; top: 65px; right: 15px; background: rgba(0,0,0,0.7); color: white; padding: 5px 12px; border-radius: 20px; font-size: 12px; opacity: 0; transition: 0.3s; }
+        #saveIndicator.show { opacity: 1; }
+    </style>
+</head>
+<body>
+    <div id="saveIndicator">☁️ 已同步</div>
+    <header class="header-bar">
+        <button onclick="window.location.href='index.html'">返回点单</button>
+        <h2>📝 菜单管理</h2>
+        <div class="btn-group">
+            <button onclick="exportMenu()" style="background: #28a745;">下载</button>
+            <button onclick="document.getElementById('importInput').click()" style="background: #17a2b8;">上传</button>
+        </div>
+        <input type="file" id="importInput" style="display: none;" accept=".json" onchange="importMenu(event)">
+    </header>
+
+    <div class="menu-list" id="menuList"></div>
+    <button class="fab-add" id="openModalBtn">＋</button>
+
+    <div id="itemModal" class="modal">
+        <div class="modal-content">
+            <h3 style="margin-top:0;">菜品信息</h3>
+            <form id="itemForm">
+                <input type="hidden" id="itemId">
+                <label>名称</label><input type="text" id="itemName" required>
+                <label>价格 (Ks)</label><input type="number" id="itemPrice" required>
+                <label>分类</label><select id="itemCategory" required></select>
+                <div class="modal-actions">
+                    <button type="button" onclick="hideModal()" style="background:#eee;">取消</button>
+                    <button type="submit" style="background:#FF8C00; color:white;">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // --- Firebase 配置更新 ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyAQGZJpFrveak_gvga6Q8Q5MbxlDVVsxXE",
+            authDomain: "yeyekao-3878d.firebaseapp.com",
+            projectId: "yeyekao-3878d",
+            storageBucket: "yeyekao-3878d.firebasestorage.app",
+            messagingSenderId: "560765118345",
+            appId: "1:560765118345:web:5f24d021e7a6db90b76358"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        let globalData = { menu_data: [] };
+
+        async function init() {
+            try {
+                const doc = await db.collection("settings").doc("menu").get();
+                if (doc.exists) {
+                    globalData = doc.data();
+                    renderList();
+                }
+            } catch (e) { console.error("加载失败", e); }
+        }
+
+        async function saveData() {
+            const ind = document.getElementById('saveIndicator');
+            ind.textContent = '☁️ 同步中...'; ind.classList.add('show');
+            try {
+                await db.collection("settings").doc("menu").set(globalData);
+                ind.textContent = '✅ 已同步至云端';
+                setTimeout(()=>ind.classList.remove('show'), 2000);
+            } catch (e) { alert("保存失败: " + e.message); }
+        }
+
+        function renderList() {
+            const list = document.getElementById('menuList');
+            list.innerHTML = '';
+            const items = globalData.menu_data || [];
+            const groups = items.reduce((acc, item) => {
+                (acc[item.category] = acc[item.category] || []).push(item);
+                return acc;
+            }, {});
+            for (const [cat, catItems] of Object.entries(groups)) {
+                const block = document.createElement('div');
+                block.className = 'category-block';
+                block.innerHTML = `<div class="category-title">${cat}</div>`;
+                catItems.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'menu-item-card';
+                    div.innerHTML = `
+                        <div class="item-info">
+                            <div class="name">${item.name}</div>
+                            <div class="price">${Number(item.price).toLocaleString()} Ks</div>
+                        </div>
+                        <div class="actions">
+                            <button class="edit-btn" onclick="editItem('${item.id || item.name}')">编辑</button>
+                            <button class="delete-btn" onclick="deleteItem('${item.id || item.name}')">删除</button>
+                        </div>`;
+                    block.appendChild(div);
+                });
+                list.appendChild(block);
+            }
+            renderCategoryOptions();
+        }
+
+        function renderCategoryOptions() {
+            const select = document.getElementById('itemCategory');
+            const existing = [...new Set((globalData.menu_data || []).map(i => i.category))];
+            select.innerHTML = '<option value="">-- 选择分类 --</option>';
+            existing.forEach(c => { select.innerHTML += `<option value="${c}">${c}</option>`; });
+            select.innerHTML += `<option value="NEW">➕ 新增分类...</option>`;
+            select.onchange = function() {
+                if(this.value === 'NEW') {
+                    const val = prompt("输入新分类名称:");
+                    if(val) {
+                        const opt = document.createElement('option');
+                        opt.value = val; opt.text = val; opt.selected = true;
+                        select.insertBefore(opt, select.lastChild);
+                    }
+                }
+            }
+        }
+
+        document.getElementById('openModalBtn').onclick = () => {
+            document.getElementById('itemForm').reset();
+            document.getElementById('itemId').value = '';
+            document.getElementById('itemModal').style.display = 'flex';
+        };
+
+        window.hideModal = () => { document.getElementById('itemModal').style.display = 'none'; };
+
+        window.editItem = (id) => {
+            const item = globalData.menu_data.find(i => (i.id || i.name) === id);
+            if(!item) return;
+            document.getElementById('itemId').value = item.id || item.name;
+            document.getElementById('itemName').value = item.name;
+            document.getElementById('itemPrice').value = item.price;
+            renderCategoryOptions();
+            document.getElementById('itemCategory').value = item.category;
+            document.getElementById('itemModal').style.display = 'flex';
+        };
+
+        window.deleteItem = async (id) => {
+            if(confirm('确定删除？')) {
+                globalData.menu_data = globalData.menu_data.filter(i => (i.id || i.name) !== id);
+                renderList(); await saveData();
+            }
+        };
+
+        document.getElementById('itemForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('itemId').value;
+            const name = document.getElementById('itemName').value;
+            const price = Number(document.getElementById('itemPrice').value);
+            const cat = document.getElementById('itemCategory').value;
+            if(id) {
+                const idx = globalData.menu_data.findIndex(i => (i.id || i.name) === id);
+                globalData.menu_data[idx] = { id, name, price, category: cat };
+            } else {
+                globalData.menu_data.push({ id: 'item_' + Date.now(), name, price, category: cat });
+            }
+            hideModal(); renderList(); await saveData();
+        };
+
+        function exportMenu() {
+            const dataStr = JSON.stringify(globalData, null, 2);
+            const blob = new Blob([dataStr], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `menu_backup.json`; a.click();
+        }
+
+        function importMenu(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const imported = JSON.parse(e.target.result);
+                    if (imported.menu_data) {
+                        globalData = imported;
+                        renderList(); await saveData();
+                        alert("同步成功！点单页现在可以看到新菜单了。");
+                    }
+                } catch (err) { alert("文件无效"); }
+            };
+            reader.readAsText(file);
+        }
+
+        init();
+    </script>
+</body>
+</html>

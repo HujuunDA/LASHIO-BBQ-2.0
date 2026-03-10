@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>待结算订单 - YeYeKao</title>
+    <script src="firebase-app-compat.js"></script>
+<script src="firebase-firestore-compat.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: -apple-system, sans-serif; background-color: #f4f6f8; color: #333; }
+        .admin-container { width: 100%; max-width: 1400px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+        
+        .admin-header { 
+            background: white; padding: 10px 20px; display: flex; justify-content: space-between; 
+            align-items: center; position: sticky; top: 0; z-index: 100; box-shadow: 0 1px 3px rgba(0,0,0,0.05); 
+        }
+        .btn-back { background: #f0f0f0; color: #666; padding: 6px 15px; border-radius: 20px; font-size: 13px; cursor: pointer; text-decoration: none; font-weight: 500; }
+        
+        .order-list { padding: 15px; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+        @media (max-width: 450px) { .order-list { grid-template-columns: 1fr; padding: 8px; } }
+
+        .order-card { 
+            background: white; border-radius: 18px; padding: 15px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid #eee;
+            display: flex; flex-direction: column; position: relative;
+        }
+
+        .table-label { background: #ff8c2d; color: white; padding: 4px 12px; border-radius: 8px; font-weight: bold; font-size: 18px; margin-bottom: 12px; align-self: flex-start; }
+        
+        .orders-wrapper {
+            position: relative;
+            max-height: 200px; 
+            overflow: hidden;
+            transition: max-height 0.4s ease;
+        }
+        .orders-wrapper.expanded { max-height: 5000px; }
+
+        .fade-overlay {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            height: 40px;
+            background: linear-gradient(to top, white, rgba(255,255,255,0));
+            pointer-events: none; z-index: 2;
+        }
+        .expanded .fade-overlay { display: none; }
+
+        .sub-order { border-left: 3px solid #ffe4cc; padding-left: 10px; margin-bottom: 12px; }
+        .order-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+        .order-tag { font-size: 10px; background: #fff1e6; color: #ff8c2d; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
+        .order-time { color: #aaa; font-size: 11px; margin-left: 5px; }
+        .btn-cancel-small { color: #ff4d4d; font-size: 12px; cursor: pointer; font-weight: bold; padding: 2px 5px; }
+        .food-item { color: #333; font-size: 15px; font-weight: 600; margin: 3px 0; }
+        .remark-box { background: #fdf2e9; border-radius: 6px; padding: 4px 8px; margin-top: 5px; font-size: 12px; color: #ff5e1a; display: inline-block; }
+
+        .toggle-btn { 
+            text-align: center; color: #ff8c2d; font-size: 13px; font-weight: bold; 
+            padding: 8px 0; cursor: pointer; border-bottom: 1px solid #f9f9f9;
+            margin-bottom: 10px;
+        }
+
+        /* 优惠输入框样式 */
+        .discount-section {
+            background: #fff9f5; padding: 10px; border-radius: 10px; margin-bottom: 10px;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .discount-label { font-size: 13px; color: #666; font-weight: bold; }
+        
+        /* 核心修改：去掉上下键箭头并美化输入框 */
+        .discount-input { 
+            width: 110px; border: 1px solid #ddd; border-radius: 8px; 
+            padding: 8px; text-align: right; font-size: 16px; color: #ff5e1a; font-weight: bold;
+            outline: none; -webkit-appearance: none; appearance: none;
+        }
+        /* 隐藏 Chrome, Safari, Edge 的上下键 */
+        .discount-input::-webkit-outer-spin-button,
+        .discount-input::-webkit-inner-spin-button {
+            -webkit-appearance: none; margin: 0;
+        }
+        /* 隐藏 Firefox 的上下键 */
+        .discount-input[type=number] { -moz-appearance: textfield; }
+
+        .card-bottom { margin-top: auto; padding-top: 10px; border-top: 1px dashed #eee; display: flex; justify-content: space-between; align-items: center; }
+        .total-price { font-size: 22px; font-weight: 900; color: #ff5e1a; }
+        .total-price::after { content: " Ks"; font-size: 13px; margin-left: 2px; }
+        .btn-pay { background: #32d74b; color: white; padding: 8px 20px; border-radius: 12px; font-size: 15px; font-weight: bold; cursor: pointer; border: none; }
+
+        #toast {
+            display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85); color: white; padding: 16px 32px; border-radius: 50px;
+            z-index: 1000; font-weight: bold; font-size: 16px; text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div id="toast">操作成功！</div>
+
+<div class="admin-container">
+    <div class="admin-header">
+        <a href="index.html" class="btn-back">⬅ 返回点餐</a>
+        <div style="text-align:right">
+            <div style="font-size:14px; font-weight:bold;">待结算订单</div>
+            <div id="online-status" style="font-size:10px; color:#32d74b;">● 实时同步中</div>
+        </div>
+    </div>
+    
+    <div class="order-list" id="list-container">
+        <div style="text-align:center; padding-top:100px; color:#999; grid-column: 1/-1;">正在加载云端数据...</div>
+    </div>
+</div>
+
+<script>
+    const firebaseConfig = { 
+        apiKey: "AIzaSyAQGZJpFrveak_gvga6Q8Q5MbxlDVVsxXE", 
+        authDomain: "yeyekao-3878d.firebaseapp.com", 
+        projectId: "yeyekao-3878d", 
+        storageBucket: "yeyekao-3878d.firebasestorage.app", 
+        messagingSenderId: "560765118345", 
+        appId: "1:560765118345:web:5f24d021e7a6db90b76358" 
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    function showToast(text) {
+        const toast = document.getElementById('toast');
+        toast.innerText = text;
+        toast.style.display = 'block';
+        setTimeout(() => { toast.style.display = 'none'; }, 1500);
+    }
+
+    function toggleOrder(btn) {
+        const wrapper = btn.previousElementSibling;
+        if (wrapper.classList.contains('expanded')) {
+            wrapper.classList.remove('expanded');
+            btn.innerText = '查看全部订单 ▾';
+        } else {
+            wrapper.classList.add('expanded');
+            btn.innerText = '收起订单 ▴';
+        }
+    }
+
+    // 更新显示的总价
+    function updateDisplayPrice(tableNum, originalTotal) {
+        const input = document.getElementById(`discount-${tableNum}`);
+        const display = document.getElementById(`price-display-${tableNum}`);
+        const discount = Number(input.value) || 0;
+        const finalPrice = Math.max(0, originalTotal - discount);
+        display.innerText = finalPrice.toLocaleString();
+    }
+
+    function startListening() {
+        db.collection("pending_orders").orderBy("timestamp", "asc")
+        .onSnapshot((querySnapshot) => {
+            const container = document.getElementById('list-container');
+            const tableGroups = {};
+            
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                data.docId = doc.id;
+                const tableNum = data.table;
+                if (!tableGroups[tableNum]) tableGroups[tableNum] = [];
+                tableGroups[tableNum].push(data);
+            });
+
+            const tableKeys = Object.keys(tableGroups);
+            if(tableKeys.length === 0) {
+                container.innerHTML = '<div style="text-align:center; padding-top:100px; color:#999; grid-column: 1/-1;">目前没有待结算的桌位</div>';
+                return;
+            }
+
+            container.innerHTML = '';
+            tableKeys.forEach(tableNum => {
+                const orders = tableGroups[tableNum];
+                let tableTotal = 0;
+                let ordersHtml = '';
+
+                orders.forEach((order, index) => {
+                    const tag = index === 0 ? "初始" : "加单";
+                    const time = order.timestamp ? new Date(order.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "...";
+                    
+                    let itemsHtml = order.items.map(item => {
+                        tableTotal += (Number(item.price) * Number(item.quantity));
+                        return `<div class="food-item">${item.name} × ${item.quantity}</div>`;
+                    }).join('');
+
+                    ordersHtml += `
+                        <div class="sub-order">
+                            <div class="order-header">
+                                <div><span class="order-tag">${tag}</span><span class="order-time">${time}</span></div>
+                                <div class="btn-cancel-small" onclick="deleteOrder('${order.docId}', '${order.table}')">取消</div>
+                            </div>
+                            ${itemsHtml}
+                            ${order.notes && order.notes !== '无备注' ? `<div class="remark-box">💬 ${order.notes}</div>` : ''}
+                        </div>`;
+                });
+
+                const card = document.createElement('div');
+                card.className = 'order-card';
+                const docIds = JSON.stringify(orders.map(o => o.docId));
+                
+                card.innerHTML = `
+                    <div class="table-label"># ${tableNum}</div>
+                    <div class="orders-wrapper">
+                        ${ordersHtml}
+                        <div class="fade-overlay"></div>
+                    </div>
+                    <div class="toggle-btn" onclick="toggleOrder(this)">查看全部订单 ▾</div>
+                    
+                    <div class="discount-section">
+                        <span class="discount-label">减免优惠:</span>
+                        <input type="tel" class="discount-input" id="discount-${tableNum}" 
+                            placeholder="0" oninput="updateDisplayPrice('${tableNum}', ${tableTotal})">
+                    </div>
+
+                    <div class="card-bottom">
+                        <div class="total-price" id="price-display-${tableNum}">${tableTotal.toLocaleString()}</div>
+                        <button class="btn-pay" onclick='confirmPay("${tableNum}", ${docIds}, ${tableTotal})'>结账</button>
+                    </div>`;
+                container.appendChild(card);
+            });
+        });
+    }
+
+    async function deleteOrder(docId, tableNum) {
+        if(!confirm(`确定取消这笔订单吗？`)) return;
+        try {
+            await db.collection("pending_orders").doc(docId).delete();
+            showToast("已成功取消");
+        } catch (e) { alert("失败: " + e.message); }
+    }
+
+    async function confirmPay(tableNum, docIds, originalTotal) {
+        const discount = Number(document.getElementById(`discount-${tableNum}`).value) || 0;
+        const finalTotal = Math.max(0, originalTotal - discount);
+
+        if(!confirm(`确定为 ${tableNum} 号桌结算吗？\n原价: ${originalTotal.toLocaleString()} Ks\n优惠: ${discount.toLocaleString()} Ks\n应收: ${finalTotal.toLocaleString()} Ks`)) return;
+        
+        try {
+            const snap = await db.collection("pending_orders").where("table", "==", tableNum).get();
+            const allItems = [];
+            let combinedNotes = "";
+            let deviceName = "未知设备";
+
+            snap.forEach(doc => {
+                const d = doc.data();
+                if(d.items) allItems.push(...d.items);
+                if(d.notes && d.notes !== "无备注") {
+                    combinedNotes += (combinedNotes ? " | " : "") + d.notes;
+                }
+                if(d.device) deviceName = d.device; 
+            });
+
+            await db.collection("orders").add({
+                table: tableNum, 
+                total: finalTotal,
+                discount: discount,
+                originalTotal: originalTotal,
+                items: allItems, 
+                remark: combinedNotes || "无备注",
+                device: deviceName, 
+                timestamp: firebase.firestore.FieldValue.serverTimestamp(), 
+                type: "快速结算"
+            });
+
+            const batch = db.batch();
+            docIds.forEach(id => { batch.delete(db.collection("pending_orders").doc(id)); });
+            await batch.commit();
+            showToast(`✅ ${tableNum}号桌 结算成功！`);
+        } catch (e) { alert("失败: " + e.message); }
+    }
+
+    window.onload = startListening;
+</script>
+</body>
+</html>

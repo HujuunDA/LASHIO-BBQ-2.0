@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>数据中心 - 极致详细版</title>
+    <script src="firebase-app-compat.js"></script>
+<script src="firebase-firestore-compat.js"></script>
+    <style>
+        :root { --primary: #FF8C00; --bg: #f6f7fb; --text: #333; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); margin: 0; padding: 15px; color: var(--text); padding-bottom: 50px; }
+        
+        /* 头部样式 */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        
+        /* 新增：左侧按钮组容器，确保返回和待结算并排 */
+        .header-left { display: flex; gap: 8px; align-items: center; }
+        
+        .back-btn { padding: 10px 18px; background: var(--primary); color: white; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 14px; }
+        
+        /* 新增：待结算按钮样式 */
+        .pending-link { padding: 10px 18px; background: #FF8C00; color: white; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 14px; opacity: 0.9; }
+
+        .top-ops { display: flex; gap: 8px; }
+        .op-btn { background: #fff; border: 1px solid #eee; padding: 8px 12px; border-radius: 10px; font-size: 12px; font-weight: bold; color: #444; cursor: pointer; }
+        .op-btn.export { background: #4CAF50; color: white; border: none; }
+        .op-btn.clear { color: #ff4d4d; }
+
+        /* 营收统计卡片 */
+        .revenue-card { background: white; padding: 25px 20px; border-radius: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .rev-label { font-size: 14px; color: #999; margin-bottom: 8px; }
+        .rev-val { font-size: 34px; font-weight: 900; color: #FF4500; letter-spacing: -1px; }
+
+        /* 榜单样式 */
+        .rank-section { margin-bottom: 25px; }
+        .section-title { font-weight: 800; font-size: 16px; margin-bottom: 12px; padding-left: 5px; }
+        .rank-container { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 10px; scrollbar-width: none; }
+        .rank-container::-webkit-scrollbar { display: none; }
+        .rank-item-card { background: white; min-width: 110px; padding: 15px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); text-align: center; flex-shrink: 0; }
+        .rank-badge { display: inline-block; background: var(--primary); color: white; font-size: 10px; padding: 2px 8px; border-radius: 8px; margin-bottom: 8px; }
+        .rank-name { font-size: 14px; font-weight: bold; color: #333; display: block; }
+        .rank-qty { font-size: 18px; font-weight: 800; color: var(--primary); }
+
+        /* 过滤器 */
+        .filter-bar { display: flex; gap: 8px; margin-bottom: 15px; }
+        .filter-btn { padding: 10px 20px; background: white; border-radius: 15px; font-size: 14px; border: none; color: #666; font-weight: 600; cursor: pointer; }
+        .filter-btn.active { background: var(--primary); color: white; }
+
+        /* 订单卡片 */
+        .order-card { background: white; padding: 18px; border-radius: 22px; margin-bottom: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); position: relative; border: 1px solid #f0f0f0; }
+        .order-top { display: flex; justify-content: space-between; border-bottom: 1px solid #f5f5f5; padding-bottom: 10px; margin-bottom: 10px; padding-right: 35px; }
+        .table-no { font-weight: 800; font-size: 16px; color: #FF8C00; }
+        .order-time { font-size: 12px; color: #bbb; }
+        .item-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; color: #555; }
+        .item-sub { font-size: 12px; color: #999; }
+        .order-total { text-align: right; margin-top: 10px; font-size: 18px; font-weight: 800; color: #FF4500; border-top: 1px solid #f9f9f9; padding-top: 8px; }
+        .order-info { font-size: 11px; color: #ccc; margin-top: 5px; }
+        
+        /* 删除按钮 */
+        .btn-del { position: absolute; top: 15px; right: 15px; background: #fff0f0; color: #ff4d4d; border: none; width: 30px; height: 30px; border-radius: 10px; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="header-left">
+            <a href="index.html" class="back-btn">← 返回</a>
+            <a href="带结算.html" class="pending-link">待结算</a>
+        </div>
+        <div class="top-ops">
+            <button class="op-btn export" onclick="exportDetailedCSV()">📁 导出极致明细</button>
+            <button class="op-btn clear" onclick="clearData()">清空</button>
+        </div>
+    </div>
+
+    <div class="revenue-card">
+        <div class="rev-label">今日合计营收</div>
+        <div class="rev-val" id="today-total">0 Ks</div>
+        <div style="font-size:12px; color:#aaa; margin-top:10px;">
+            共成交 <span id="today-count" style="color:var(--text); font-weight:bold;">0</span> 笔订单
+        </div>
+    </div>
+
+    <div class="rank-section">
+        <div class="section-title">🔥 销量排行 (今日)</div>
+        <div class="rank-container" id="rank-list"></div>
+    </div>
+
+    <div class="filter-bar">
+        <button class="filter-btn active" onclick="setFilter('today', this)">今日</button>
+        <button class="filter-btn" onclick="setFilter('all', this)">全部历史</button>
+    </div>
+
+    <div id="order-history"></div>
+
+    <script>
+        const firebaseConfig = { 
+            apiKey: "AIzaSyAQGZJpFrveak_gvga6Q8Q5MbxlDVVsxXE", 
+            authDomain: "yeyekao-3878d.firebaseapp.com", 
+            projectId: "yeyekao-3878d", 
+            storageBucket: "yeyekao-3878d.firebasestorage.app", 
+            messagingSenderId: "560765118345", 
+            appId: "1:560765118345:web:5f24d021e7a6db90b76358" 
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        let allOrders = [];
+        let currentFilter = 'today';
+
+        function loadData() {
+            db.collection("orders").orderBy("timestamp", "desc").onSnapshot(snap => {
+                allOrders = [];
+                snap.forEach(doc => {
+                    const d = doc.data();
+                    allOrders.push({ ...d, id: doc.id, date: d.timestamp?.toDate() || new Date() });
+                });
+                render();
+            });
+        }
+
+        async function deleteOrder(id) {
+            if(confirm("确定删除这笔账单吗？")) {
+                await db.collection("orders").doc(id).delete();
+            }
+        }
+
+        function render() {
+            const todayStr = new Date().toDateString();
+            const todayOrders = allOrders.filter(o => o.date.toDateString() === todayStr);
+            
+            // 更新营收
+            const total = todayOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+            document.getElementById('today-total').innerText = total.toLocaleString() + ' Ks';
+            document.getElementById('today-count').innerText = todayOrders.length;
+
+            // 销量榜
+            const sales = {};
+            todayOrders.forEach(o => {
+                if(o.items) o.items.forEach(i => sales[i.name] = (sales[i.name] || 0) + i.quantity);
+            });
+            const sorted = Object.entries(sales).sort((a,b) => b[1] - a[1]).slice(0, 10);
+            document.getElementById('rank-list').innerHTML = sorted.map(([name, qty], idx) => `
+                <div class="rank-item-card">
+                    <span class="rank-badge">#${idx+1}</span>
+                    <span class="rank-name">${name}</span>
+                    <span class="rank-qty">${qty}</span>
+                </div>
+            `).join('');
+
+            // 订单列表
+            const displayOrders = currentFilter === 'today' ? todayOrders : allOrders;
+            const container = document.getElementById('order-history');
+            
+            if (displayOrders.length === 0) {
+                container.innerHTML = '<div style="text-align:center;padding:50px;color:#ccc;">暂无订单</div>';
+                return;
+            }
+
+            container.innerHTML = displayOrders.map(o => `
+                <div class="order-card">
+                    <button class="btn-del" onclick="deleteOrder('${o.id}')">×</button>
+                    <div class="order-top">
+                        <span class="table-no">桌号: ${o.table}</span>
+                        <span class="order-time">${o.date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                    </div>
+                    <div>
+                        ${(o.items || []).map(i => `
+                            <div class="item-row">
+                                <span>${i.name} <span class="item-sub">(@${i.price})</span></span>
+                                <span>x${i.quantity}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    ${o.remark && o.remark !== "无备注" ? `<div style="font-size:12px; color:#E6A23C; margin-top:8px;">📝 ${o.remark}</div>` : ''}
+                    <div class="order-total">Total: ${Number(o.total).toLocaleString()} Ks</div>
+                    <div class="order-info">设备: ${o.device || '未知'} | 日期: ${o.date.toLocaleDateString()}</div>
+                </div>
+            `).join('');
+        }
+
+        function setFilter(f, btn) {
+            currentFilter = f;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            render();
+        }
+
+        // 极致详细导出功能
+        function exportDetailedCSV() {
+            if (allOrders.length === 0) { alert("没有可导出的数据"); return; }
+
+            // 定义表头
+            let csv = "\uFEFF日期,时间,桌号,菜品名称,单价,数量,此项小计,订单总额,备注,操作设备,订单ID\n";
+            
+            allOrders.forEach(o => {
+                const dateStr = o.date.toLocaleDateString();
+                const timeStr = o.date.toLocaleTimeString();
+                const table = o.table;
+                const orderTotal = o.total;
+                const remark = (o.remark || "无").replace(/,/g, "，");
+                const device = o.device || "未知";
+                const orderId = o.id;
+
+                if (o.items && o.items.length > 0) {
+                    o.items.forEach(i => {
+                        const itemName = i.name.replace(/,/g, "，");
+                        const price = i.price || 0;
+                        const qty = i.quantity || 0;
+                        const itemSubTotal = price * qty;
+                        
+                        csv += `${dateStr},${timeStr},${table},${itemName},${price},${qty},${itemSubTotal},${orderTotal},${remark},${device},${orderId}\n`;
+                    });
+                } else {
+                    csv += `${dateStr},${timeStr},${table},无明细,0,0,0,${orderTotal},${remark},${device},${orderId}\n`;
+                }
+            });
+            
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = `详细财务明细_${new Date().toISOString().slice(0,10)}.csv`;
+            link.click();
+        }
+
+        async function clearData() {
+            if(confirm("确定要删除所有历史数据吗？")) {
+                const snap = await db.collection("orders").get();
+                const batch = db.batch();
+                snap.forEach(doc => batch.delete(doc.ref));
+                await batch.commit();
+            }
+        }
+
+        loadData();
+    </script>
+</body>
+</html>
