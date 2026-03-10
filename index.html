@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>点餐系统</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-app-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-firestore-compat.min.js"></script>
+    <style>
+        /* 保持你原有的样式不变 */
+        body { margin: 0; padding: 0; font-family: sans-serif; background-color: #f8f8f8; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 1200px; background-color: #fff; min-height: 100vh; position: relative; display: flex; flex-direction: column; box-shadow: 0 0 10px rgba(0,0,0,0.05); }
+        .item-list { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); }
+        @media (max-width: 600px) { .item-list { grid-template-columns: 1fr; } }
+        .header { background-color: #ff8c2d; padding: 15px; display: flex; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 20; }
+        .category-nav { background: white; display: flex; overflow-x: auto; white-space: nowrap; padding: 10px; gap: 10px; position: sticky; top: 60px; z-index: 15; border-bottom: 1px solid #eee; -webkit-overflow-scrolling: touch; }
+        .category-nav::-webkit-scrollbar { display: none; }
+        .nav-item { padding: 6px 15px; background: #f0f0f0; border-radius: 15px; font-size: 14px; color: #666; flex-shrink: 0; cursor: pointer; }
+        .nav-item.active { background: #ff8c2d; color: white; }
+        .table-select { background-color: #ff5e1a; color: white; padding: 8px 12px; border-radius: 20px; font-weight: bold; font-size: 13px; white-space: nowrap; cursor: pointer; }
+        .submitted-btn { background-color: rgba(255, 255, 255, 0.2); color: white; padding: 8px 12px; border-radius: 20px; font-weight: bold; font-size: 13px; white-space: nowrap; cursor: pointer; border: 1px solid rgba(255, 255, 255, 0.3); }
+        .remark-input { flex: 1; border: none; border-radius: 8px; padding: 8px 12px; outline: none; min-width: 50px; }
+        .settings-icon { color: white; font-size: 24px; cursor: pointer; padding-left: 5px; }
+        .category-bar { background-color: #fff9f1; padding: 10px 15px; color: #ff8c2d; font-weight: bold; border-bottom: 1px solid #eee; scroll-margin-top: 110px; grid-column: 1 / -1; }
+        .item { display: flex; justify-content: space-between; align-items: center; padding: 20px 15px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+        .name { font-size: 18px; font-weight: bold; color: #333; }
+        .price { color: #ff8c2d; font-weight: bold; margin-top: 5px; }
+        .stepper { display: flex; align-items: center; gap: 15px; }
+        .btn-minus { width: 26px; height: 26px; border: 1px solid #ff8c2d; color: #ff8c2d; border-radius: 50%; display: flex; justify-content: center; align-items: center; visibility: hidden; }
+        .btn-plus { width: 28px; height: 28px; background-color: #ff8c2d; color: white; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-weight: bold; }
+        .count { font-weight: bold; min-width: 15px; text-align: center; }
+        .footer { padding: 15px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #eee; background: white; position: sticky; bottom: 0; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); }
+        .amount { color: #ff5e1a; font-size: 22px; font-weight: 800; }
+        .btn-checkout { background-color: #ff8c2d; color: white; padding: 12px 30px; border-radius: 25px; font-weight: bold; cursor: pointer; }
+        .modal-mask { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 99; }
+        .dialog { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 20px; padding: 20px; width: 85%; max-width: 340px; z-index: 100; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+        .detail-remark-section { margin: 15px 0; background: #f9f9f9; border-radius: 8px; padding: 10px; border: 1px solid #eee; }
+        .detail-remark-edit { width: 100%; border: none; background: transparent; font-size: 14px; color: #333; outline: none; resize: none; font-family: inherit; padding: 0; }
+        .table-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 20px; }
+        .table-item { border: 1px solid #eee; padding: 15px 0; text-align: center; border-radius: 10px; cursor: pointer; font-weight: bold; }
+        .table-item:active { background: #ff8c2d; color: white; }
+        .dialog-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 15px; }
+        .btn-trash { cursor: pointer; padding: 5px; display: flex; align-items: center; }
+        .trash-icon { width: 20px; height: 20px; fill: #ff4d4d; }
+        .detail-item { display: flex; justify-content: space-between; margin-bottom: 8px; }
+        .big-price { color: #ff5e1a; font-size: 24px; font-weight: bold; text-align: right; }
+        .dialog-btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 15px; }
+        .btn-back-small { padding: 10px 20px; border: 1px solid #ddd; border-radius: 10px; background: white; cursor: pointer; }
+        .btn-submit-small { padding: 10px 20px; border: none; border-radius: 10px; background: #3cc51f; color: white; font-weight: bold; cursor: pointer; }
+        #settings-dialog { border-radius: 35px; padding: 30px 25px; text-align: center; width: 80%; }
+        .admin-title { color: #ff8c2d; font-size: 26px; font-weight: bold; margin-bottom: 25px; }
+        .device-box { border: 2px dashed #ffb37a; border-radius: 15px; padding: 15px; margin-bottom: 25px; }
+        .device-label { color: #ff8c2d; font-weight: bold; font-size: 14px; margin-bottom: 10px; display: block; text-align: left; }
+        .device-input { width: 100%; border: 2px solid #ffdec2; border-radius: 12px; padding: 12px; box-sizing: border-box; outline: none; font-size: 15px; }
+        .admin-btn { background: #f6f7fb; border-radius: 18px; padding: 18px; margin-bottom: 15px; display: flex; align-items: center; border-left: 8px solid #ff8c2d; font-weight: bold; font-size: 17px; cursor: pointer; color: #333; text-decoration: none; }
+        .btn-close-large { width: 100%; padding: 15px; border: 1px solid #eee; border-radius: 15px; background: #fff; color: #666; font-weight: bold; font-size: 16px; margin-top: 10px; cursor: pointer; }
+        #toast { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0, 0, 0, 0.7); color: white; padding: 12px 25px; border-radius: 30px; z-index: 999; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="toast">下单成功！</div>
+
+<div class="container">
+    <div class="header">
+        <div class="table-select" id="table-btn" onclick="openTableSelect()">未选桌号 ▾</div>
+        <div class="submitted-btn" onclick="location.href='带结算.html'">待结算订单</div>
+        <input type="text" class="remark-input" id="main-remark" placeholder="备注..." oninput="syncRemarkToDetail(this.value)">
+        <div class="settings-icon" onclick="openAdmin()">⚙</div>
+    </div>
+    <div class="category-nav" id="category-nav"></div>
+    <div id="dynamic-menu">
+        <div style="padding:20px; text-align:center; color:#999;">正在同步云端菜单...</div>
+    </div>
+    <div class="footer">
+        <div class="total-info">
+            <div style="font-size:12px; color:#999;">共 <span id="foot-count">0</span> 件 | 合计金额</div>
+            <div class="amount" id="foot-price">0 Ks</div>
+        </div>
+        <div class="btn-checkout" onclick="showDetail()">查看详情</div>
+    </div>
+</div>
+
+<div class="modal-mask" id="global-mask"></div>
+<div id="table-dialog" class="dialog">
+    <h2 style="margin:0; text-align:center;">请选择桌号</h2>
+    <div class="table-grid" id="table-grid"></div>
+    <button class="btn-back-small" style="width:100%; margin-top:20px;" onclick="closeModals()">关闭</button>
+</div>
+<div id="detail-dialog" class="dialog">
+    <div class="dialog-header">
+        <h2 style="margin:0; font-size:18px;"><span id="det-table-name">未选桌</span> 详情</h2>
+        <div class="btn-trash" onclick="clearAll()">
+            <svg class="trash-icon" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+        </div>
+    </div>
+    <div id="order-list" style="max-height: 200px; overflow-y: auto;"></div>
+    <div class="detail-remark-section">
+        <div style="font-size: 11px; color: #ff8c2d; margin-bottom: 4px; font-weight: bold;">备注 (可在此修改)：</div>
+        <textarea id="detail-remark-edit" class="detail-remark-edit" rows="2" placeholder="输入备注..." oninput="syncRemarkToHeader(this.value)"></textarea>
+    </div>
+    <div style="text-align:right; color:#999; font-size:14px;">菜品总数：<span id="det-count">0</span></div>
+    <div class="big-price" id="det-price">合计: 0 Ks</div>
+    <div class="dialog-btns">
+        <button class="btn-back-small" onclick="closeModals()">返回</button>
+        <button class="btn-submit-small" onclick="submitOrder()">确认下单</button>
+    </div>
+</div>
+<div id="settings-dialog" class="dialog">
+    <div class="admin-title">管理后台</div>
+    <div class="device-box">
+        <label class="device-label">收银设备名称</label>
+        <input type="text" class="device-input" id="device-input-id" placeholder="输入名称后自动保存">
+    </div>
+    <a href="edit_menu.html" class="admin-btn"><span>📝</span> 编辑菜单菜品</a>
+    <a href="income_summary.html" class="admin-btn"><span>💰</span> 收入汇总账单</a>
+    <a href="16.36.html" class="admin-btn"><span>🛒</span> 采购管理系统</a>
+    <button class="btn-close-large" onclick="closeModals()">关闭</button>
+</div>
+
+<script>
+    const firebaseConfig = { 
+        apiKey: "AIzaSyAQGZJpFrveak_gvga6Q8Q5MbxlDVVsxXE", 
+        authDomain: "yeyekao-3878d.firebaseapp.com", 
+        projectId: "yeyekao-3878d", 
+        storageBucket: "yeyekao-3878d.firebasestorage.app", 
+        messagingSenderId: "560765118345", 
+        appId: "1:560765118345:web:5f24d021e7a6db90b76358" 
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    let currentTable = null;
+    const mask = document.getElementById('global-mask');
+
+    // --- 初始化桌号网格 ---
+    const grid = document.getElementById('table-grid');
+    for(let i=1; i<=10; i++) {
+        const div = document.createElement('div');
+        div.className = 'table-item';
+        div.innerText = i;
+        div.onclick = () => selectTable(i);
+        grid.appendChild(div);
+    }
+
+    // --- 1. 数据保存核心逻辑 ---
+    function saveTempOrder() {
+        const orderData = {
+            table: currentTable,
+            remark: document.getElementById('main-remark').value,
+            counts: {}
+        };
+        document.querySelectorAll('.item').forEach(item => {
+            const count = parseInt(item.querySelector('.count').innerText);
+            if(count > 0) orderData.counts[item.dataset.name] = count;
+        });
+        localStorage.setItem('unsaved_order', JSON.stringify(orderData));
+    }
+
+    function restoreTempOrder() {
+        const saved = localStorage.getItem('unsaved_order');
+        if(!saved) return;
+        const data = JSON.parse(saved);
+        if(data.table) selectTable(data.table, false); // 静默恢复桌号
+        if(data.remark) {
+            document.getElementById('main-remark').value = data.remark;
+            document.getElementById('detail-remark-edit').value = data.remark;
+        }
+        if(data.counts) {
+            document.querySelectorAll('.item').forEach(item => {
+                const name = item.dataset.name;
+                if(data.counts[name]) item.querySelector('.count').innerText = data.counts[name];
+            });
+            updateTotals();
+        }
+    }
+
+    // --- 2. 菜单加载核心逻辑 ---
+    async function loadMenu() {
+        // A. 先看本地有没有缓存，有就直接渲染
+        const localCache = localStorage.getItem('menu_cache');
+        if(localCache) {
+            renderMenu(JSON.parse(localCache));
+            restoreTempOrder();
+        }
+
+        try {
+            // B. 从 Firebase 拉取最新的
+            const doc = await db.collection("settings").doc("menu").get();
+            if (doc.exists) {
+                const menuData = doc.data().menu_data || [];
+                localStorage.setItem('menu_cache', JSON.stringify(menuData));
+                renderMenu(menuData);
+                restoreTempOrder(); // 重新应用点单数，防止被覆盖
+            }
+        } catch (e) { console.log("云端同步失败"); }
+    }
+
+    function renderMenu(items) {
+        const menuContainer = document.getElementById('dynamic-menu');
+        const navContainer = document.getElementById('category-nav');
+        const groups = items.reduce((acc, item) => {
+            (acc[item.category] = acc[item.category] || []).push(item);
+            return acc;
+        }, {});
+
+        let menuHtml = '';
+        let navHtml = '';
+        Object.keys(groups).forEach(cat => {
+            navHtml += `<div class="nav-item" onclick="scrollToCategory('${cat}')">${cat}</div>`;
+            menuHtml += `<div class="category-bar" id="cat-${cat}">${cat}</div><div class="item-list">`;
+            groups[cat].forEach(item => {
+                menuHtml += `
+                    <div class="item" onclick="handleItemClick(this, 1)" data-name="${item.name}" data-price="${item.price}">
+                        <div><div class="name">${item.name}</div><div class="price">${Number(item.price).toLocaleString()} Ks</div></div>
+                        <div class="stepper">
+                            <div class="btn-minus" onclick="event.stopPropagation(); changeCount(this.closest('.item'), -1)">-</div>
+                            <span class="count">0</span>
+                            <div class="btn-plus">+</div>
+                        </div>
+                    </div>`;
+            });
+            menuHtml += `</div>`;
+        });
+        navContainer.innerHTML = navHtml;
+        menuContainer.innerHTML = menuHtml || '<p style="padding:20px;text-align:center;">暂无数据</p>';
+    }
+
+    // --- 3. 基础功能函数 ---
+    function syncRemarkToDetail(val) { document.getElementById('detail-remark-edit').value = val; saveTempOrder(); }
+    function syncRemarkToHeader(val) { document.getElementById('main-remark').value = val; saveTempOrder(); }
+
+    function scrollToCategory(id) {
+        const target = document.getElementById('cat-' + id);
+        if (target) target.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function openTableSelect() { mask.style.display = 'block'; document.getElementById('table-dialog').style.display = 'block'; }
+    function selectTable(num, doSave = true) {
+        currentTable = num;
+        document.getElementById('table-btn').innerText = '桌号 ' + num + ' ▾';
+        document.getElementById('det-table-name').innerText = '桌号 ' + num;
+        if(doSave) { saveTempOrder(); closeModals(); }
+    }
+
+    function handleItemClick(el, delta) { if(!currentTable) { openTableSelect(); return; } changeCount(el, delta); }
+    function changeCount(itemEl, delta) {
+        const countSpan = itemEl.querySelector('.count');
+        let current = parseInt(countSpan.innerText) + delta;
+        countSpan.innerText = current < 0 ? 0 : current;
+        updateTotals();
+        saveTempOrder();
+    }
+
+    function updateTotals() {
+        let total = 0, count = 0;
+        document.querySelectorAll('.item').forEach(item => {
+            const c = parseInt(item.querySelector('.count').innerText);
+            item.querySelector('.btn-minus').style.visibility = c > 0 ? 'visible' : 'hidden';
+            count += c;
+            total += c * parseInt(item.dataset.price);
+        });
+        document.getElementById('foot-count').innerText = count;
+        document.getElementById('det-count').innerText = count;
+        document.getElementById('foot-price').innerText = total.toLocaleString() + ' Ks';
+        document.getElementById('det-price').innerText = '合计: ' + total.toLocaleString() + ' Ks';
+    }
+
+    function showDetail() {
+        if(!currentTable) { openTableSelect(); return; }
+        let html = '';
+        document.querySelectorAll('.item').forEach(item => {
+            const count = parseInt(item.querySelector('.count').innerText);
+            if(count > 0) {
+                html += `<div class="detail-item"><span>${item.dataset.name} x ${count}</span><b>${(count * parseInt(item.dataset.price)).toLocaleString()}</b></div>`;
+            }
+        });
+        document.getElementById('order-list').innerHTML = html || '<p style="text-align:center;color:#999">未选菜品</p>';
+        mask.style.display = 'block';
+        document.getElementById('detail-dialog').style.display = 'block';
+    }
+
+    function openAdmin() { mask.style.display = 'block'; document.getElementById('settings-dialog').style.display = 'block'; }
+    function closeModals() { mask.style.display = 'none'; document.querySelectorAll('.dialog').forEach(d => d.style.display = 'none'); }
+
+    function clearAll() { if(confirm('确定清空？')) { resetInterface(); closeModals(); } }
+    function resetInterface() {
+        document.querySelectorAll('.count').forEach(c => c.innerText = 0);
+        document.getElementById('main-remark').value = "";
+        document.getElementById('detail-remark-edit').value = "";
+        currentTable = null;
+        document.getElementById('table-btn').innerText = '未选桌号 ▾';
+        localStorage.removeItem('unsaved_order'); // 清除点单草稿
+        updateTotals();
+    }
+
+    function showToast(text) {
+        const toast = document.getElementById('toast');
+        toast.innerText = text;
+        toast.style.display = 'block';
+        setTimeout(() => { toast.style.display = 'none'; }, 1500);
+    }
+
+    async function submitOrder() {
+        if(!currentTable) { openTableSelect(); return; }
+        const items = [];
+        let total = 0;
+        document.querySelectorAll('.item').forEach(item => {
+            const count = parseInt(item.querySelector('.count').innerText);
+            if(count > 0) {
+                items.push({ name: item.dataset.name, price: parseInt(item.dataset.price), quantity: count });
+                total += parseInt(item.dataset.price) * count;
+            }
+        });
+        if(items.length === 0) { alert('请先点单'); return; }
+
+        const finalRemark = document.getElementById('detail-remark-edit').value || "无备注";
+        const deviceName = document.getElementById('device-input-id').value || "未定义设备";
+
+        try {
+            await db.collection("pending_orders").add({
+                table: currentTable.toString(),
+                items: items,
+                total: total,
+                notes: finalRemark,
+                device: deviceName,
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            showToast('下单成功！');
+            resetInterface();
+            closeModals();
+        } catch (e) { alert("失败: " + e); }
+    }
+
+    window.onload = function() {
+        loadMenu();
+        const savedDevice = localStorage.getItem('deviceName');
+        if(savedDevice) document.getElementById('device-input-id').value = savedDevice;
+        document.getElementById('device-input-id').onchange = (e) => localStorage.setItem('deviceName', e.target.value);
+    }
+</script>
+</body>
+</html>
