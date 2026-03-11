@@ -1,50 +1,106 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>蓝牙打印测试 - YeYeKao</title>
+    <title>蓝牙打印万能测试 - YeYeKao</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 40px 20px; background: #f0f2f5; }
+        .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        button { 
+            padding: 18px 30px; font-size: 18px; font-weight: bold;
+            background: #32d74b; color: white; border: none; border-radius: 15px; 
+            cursor: pointer; width: 100%; max-width: 300px;
+        }
+        button:active { background: #28b33f; transform: scale(0.98); }
+        #status { margin-top: 25px; padding: 15px; border-radius: 10px; background: #e9ecef; color: #495057; font-size: 14px; line-height: 1.6; word-break: break-all; }
+    </style>
 </head>
-<body style="text-align: center; padding-top: 50px;">
-    <h2>蓝牙打印机连接测试</h2>
-    <button id="connect" style="padding: 20px 40px; font-size: 18px; background: #32d74b; color: white; border: none; border-radius: 10px;">
-        1. 连接打印机并打印测试页
-    </button>
-    <p id="status" style="margin-top: 20px; color: #666;">等待连接...</p>
+<body>
 
-    <script>
-        document.getElementById('connect').addEventListener('click', async () => {
-            const status = document.getElementById('status');
-            try {
-                status.innerText = "正在请求蓝牙权限...";
-                // 搜索打印机
-                const device = await navigator.bluetooth.requestDevice({
-                    filters: [
-                        { services: ['000018f0-0000-1000-8000-00805f9b34fb'] },
-                        { namePrefix: 'TP' }, 
-                        { namePrefix: 'Printer' }
-                    ],
-                    optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
-                });
+<div class="card">
+    <h2>打印机连接测试 (增强版)</h2>
+    <p style="color: #666; font-size: 14px;">点击下方按钮，在弹出的列表中选择你的打印机</p>
+    
+    <button id="connectBtn">连接并打印测试页</button>
 
-                status.innerText = "正在连接设备...";
-                const server = await device.gatt.connect();
-                const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
-                const characteristic = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+    <div id="status">等待操作...</div>
+</div>
 
-                status.innerText = "连接成功！正在发送测试指令...";
-                
-                // ESC/POS 测试指令：初始化 + 打印文字 + 换行
-                const testData = '\x1B\x40' + 'YeYeKao Test OK!\n\n\n\n';
-                const encoder = new TextEncoder();
-                await characteristic.writeValue(encoder.encode(testData));
+<script>
+    const statusDiv = document.getElementById('status');
+    const btn = document.getElementById('connectBtn');
 
-                status.innerText = "打印指令已发送！";
-            } catch (error) {
-                status.innerText = "错误: " + error.message;
-                console.error(error);
+    function updateStatus(msg) {
+        statusDiv.innerText = msg;
+        console.log(msg);
+    }
+
+    btn.addEventListener('click', async () => {
+        try {
+            updateStatus("正在唤起蓝牙搜索列表...");
+
+            // 1. 允许搜寻所有设备，并列出可能的打印机常用 UUID
+            const device = await navigator.bluetooth.requestDevice({
+                acceptAllDevices: true,
+                optionalServices: [
+                    '000018f0-0000-1000-8000-00805f9b34fb',
+                    '0000ff00-0000-1000-8000-00805f9b34fb',
+                    '49535053-fe7d-4ae5-8fa9-9fafd205e455',
+                    'e7e11001-49d2-4cc5-a975-7484b1d11077'
+                ]
+            });
+
+            updateStatus(`已选中: ${device.name || '未知设备'}，正在连接...`);
+            
+            const server = await device.gatt.connect();
+            updateStatus("连接成功！正在扫描打印服务...");
+
+            // 2. 获取所有主服务
+            const services = await server.getPrimaryServices();
+            if (services.length === 0) throw new Error("该设备没有提供任何 GATT 服务");
+
+            let targetCharacteristic = null;
+
+            // 3. 循环搜索每一个服务，寻找具有“写入”权限的通道
+            for (const service of services) {
+                updateStatus(`正在检查服务: ${service.uuid}`);
+                const chars = await service.getCharacteristics();
+                // 寻找支持写入的通道
+                const writableChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+                if (writableChar) {
+                    targetCharacteristic = writableChar;
+                    break; 
+                }
             }
-        });
-    </script>
+
+            if (!targetCharacteristic) {
+                throw new Error("未能找到可写入数据的打印通道。");
+            }
+
+            updateStatus("找到打印通道！正在准备数据...");
+
+            // 4. 准备 ESC/POS 指令 (初始化 + 居中 + 文字 + 走纸)
+            const encoder = new TextEncoder();
+            const escInit = '\x1B\x40';
+            const escCenter = '\x1B\x61\x01';
+            const testText = 'YeYeKao Test\nConnection: SUCCESS\n\n\n\n\n';
+            
+            const fullData = escInit + escCenter + testText;
+
+            updateStatus("正在发送指令到打印机...");
+            await targetCharacteristic.writeValue(encoder.encode(fullData));
+
+            updateStatus("✅ 打印指令发送成功！请检查纸张。");
+
+        } catch (error) {
+            updateStatus("❌ 错误: " + error.message);
+            if (error.message.includes("User cancelled")) {
+                updateStatus("已取消搜索。");
+            }
+        }
+    });
+</script>
+
 </body>
 </html>
