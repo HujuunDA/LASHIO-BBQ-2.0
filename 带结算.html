@@ -3,27 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AY打印机强力连接测试</title>
+    <title>AY-D5811 专用测试</title>
     <style>
         body { font-family: sans-serif; text-align: center; padding: 40px 20px; background: #f0f2f5; }
         .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 400px; margin: 0 auto; }
         button { 
             padding: 20px; font-size: 18px; font-weight: bold;
-            background: #007AFF; color: white; border: none; border-radius: 15px; 
+            background: #FF2D55; color: white; border: none; border-radius: 15px; 
             cursor: pointer; width: 100%;
         }
-        #status { margin-top: 25px; padding: 15px; border-radius: 10px; background: #333; color: #00ff00; font-family: monospace; font-size: 13px; text-align: left; min-height: 100px; white-space: pre-wrap; }
+        #status { margin-top: 25px; padding: 15px; border-radius: 10px; background: #333; color: #00ff00; font-family: monospace; font-size: 13px; text-align: left; min-height: 120px; white-space: pre-wrap; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>打印机测试 (AY系列)</h2>
-    <p style="color: #666;">请确保打印机已开机且未连接其他手机</p>
+    <h2>AY-D5811 专属测试</h2>
+    <p style="color: #666; font-size: 12px;">如果提示错误，请先去系统蓝牙设置里“忽略”此打印机</p>
     
-    <button id="connectBtn">开始扫描并连接</button>
+    <button id="connectBtn">一键精准连接并打印</button>
 
-    <div id="status">等待操作...</div>
+    <div id="status">准备就绪...</div>
 </div>
 
 <script>
@@ -36,63 +36,37 @@
     }
 
     btn.addEventListener('click', async () => {
-        statusDiv.innerText = "日志初始化...";
+        statusDiv.innerText = "日志开始...";
         try {
-            log("正在唤起蓝牙列表...");
-            // 穷举国产打印机最常用的所有服务 UUID
+            log("正在请求设备控制权...");
+            // 直接指定该类打印机最常用的原始服务 UUID
             const device = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true,
-                optionalServices: [
-                    '000018f0-0000-1000-8000-00805f9b34fb',
-                    '0000ff00-0000-1000-8000-00805f9b34fb',
-                    '0000fee7-0000-1000-8000-00805f9b34fb',
-                    '49535053-fe7d-4ae5-8fa9-9fafd205e455',
-                    'e7e11001-49d2-4cc5-a975-7484b1d11077'
-                ]
+                filters: [{ namePrefix: 'AY' }, { namePrefix: 'TP' }],
+                optionalServices: ['0000ff00-0000-1000-8000-00805f9b34fb']
             });
 
-            log("选定设备: " + device.name);
+            log("选中: " + device.name);
             const server = await device.gatt.connect();
-            log("已进入 GATT 服务器，等待 1 秒...");
             
-            // 某些打印机连接后需要缓冲时间
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            log("正在直连 FF00 打印服务...");
+            // 不再扫描，直接获取这个关键服务
+            const service = await server.getPrimaryService('0000ff00-0000-1000-8000-00805f9b34fb');
+            
+            log("正在寻找 FF02 写入通道...");
+            const characteristic = await service.getCharacteristic('0000ff02-0000-1000-8000-00805f9b34fb');
 
-            log("正在尝试获取主要服务...");
-            const services = await server.getPrimaryServices();
-            log("找到服务数量: " + services.length);
+            log("连接大功告成！发送数据...");
+            
+            // 指令：初始化 + 换行 + 文字 + 走纸
+            const encoder = new TextEncoder();
+            const data = '\x1B\x40\n  YeYeKao AY-D5811 OK!\n\n\n\n';
+            await characteristic.writeValue(encoder.encode(data));
 
-            if (services.length === 0) {
-                throw new Error("设备未返回任何服务。请尝试在手机/Mac蓝牙设置里『忽略此设备』后再重新测试。");
-            }
-
-            let writeChar = null;
-
-            for (const service of services) {
-                log("扫描服务: " + service.uuid);
-                const chars = await service.getCharacteristics();
-                for (const char of chars) {
-                    log("  -- 通道: " + char.uuid);
-                    if (char.properties.write || char.properties.writeWithoutResponse) {
-                        writeChar = char;
-                        log("  [找到写入通道!] ");
-                        break;
-                    }
-                }
-                if (writeChar) break;
-            }
-
-            if (!writeChar) throw new Error("未找到可用的打印写入通道");
-
-            log("准备发送打印指令...");
-            // 初始化 + 换行 + 测试文字
-            const data = new Uint8Array([0x1B, 0x40, 0x0A, 0x59, 0x65, 0x59, 0x65, 0x4B, 0x61, 0x6F, 0x20, 0x54, 0x65, 0x73, 0x74, 0x0A, 0x0A, 0x0A, 0x0A]);
-            await writeChar.writeValue(data);
-
-            log("✅ 指令已发送！请检查是否出纸。");
+            log("✅ 打印完成！出纸了吗？");
 
         } catch (error) {
-            log("❌ 错误: " + error.message);
+            log("❌ 失败: " + error.message);
+            log("提示：如果还是 No Services，请确认打印机没有被手机 App 连着。");
         }
     });
 </script>
