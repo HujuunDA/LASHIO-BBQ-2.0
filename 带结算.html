@@ -3,25 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AY-D5811 专用测试</title>
+    <title>AY-D5811 终极兼容测试</title>
     <style>
         body { font-family: sans-serif; text-align: center; padding: 40px 20px; background: #f0f2f5; }
         .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 400px; margin: 0 auto; }
         button { 
             padding: 20px; font-size: 18px; font-weight: bold;
-            background: #FF2D55; color: white; border: none; border-radius: 15px; 
+            background: #000; color: #fff; border: none; border-radius: 15px; 
             cursor: pointer; width: 100%;
         }
-        #status { margin-top: 25px; padding: 15px; border-radius: 10px; background: #333; color: #00ff00; font-family: monospace; font-size: 13px; text-align: left; min-height: 120px; white-space: pre-wrap; }
+        #status { margin-top: 25px; padding: 15px; border-radius: 10px; background: #333; color: #00ff00; font-family: monospace; font-size: 13px; text-align: left; min-height: 150px; white-space: pre-wrap; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>AY-D5811 专属测试</h2>
-    <p style="color: #666; font-size: 12px;">如果提示错误，请先去系统蓝牙设置里“忽略”此打印机</p>
+    <h2>终极兼容模式</h2>
+    <p style="color: #666; font-size: 12px;">此模式将列出所有蓝牙设备</p>
     
-    <button id="connectBtn">一键精准连接并打印</button>
+    <button id="connectBtn">点击并在列表选中打印机</button>
 
     <div id="status">准备就绪...</div>
 </div>
@@ -38,35 +38,50 @@
     btn.addEventListener('click', async () => {
         statusDiv.innerText = "日志开始...";
         try {
-            log("正在请求设备控制权...");
-            // 直接指定该类打印机最常用的原始服务 UUID
+            log("正在唤起全设备列表...");
+            // 核心改变：不设任何过滤条件，接受所有设备
             const device = await navigator.bluetooth.requestDevice({
-                filters: [{ namePrefix: 'AY' }, { namePrefix: 'TP' }],
-                optionalServices: ['0000ff00-0000-1000-8000-00805f9b34fb']
+                acceptAllDevices: true,
+                optionalServices: [
+                    '000018f0-0000-1000-8000-00805f9b34fb',
+                    '0000ff00-0000-1000-8000-00805f9b34fb',
+                    '49535053-fe7d-4ae5-8fa9-9fafd205e455'
+                ]
             });
 
             log("选中: " + device.name);
             const server = await device.gatt.connect();
-            
-            log("正在直连 FF00 打印服务...");
-            // 不再扫描，直接获取这个关键服务
-            const service = await server.getPrimaryService('0000ff00-0000-1000-8000-00805f9b34fb');
-            
-            log("正在寻找 FF02 写入通道...");
-            const characteristic = await service.getCharacteristic('0000ff02-0000-1000-8000-00805f9b34fb');
+            log("GATT已连接");
 
-            log("连接大功告成！发送数据...");
-            
-            // 指令：初始化 + 换行 + 文字 + 走纸
-            const encoder = new TextEncoder();
-            const data = '\x1B\x40\n  YeYeKao AY-D5811 OK!\n\n\n\n';
-            await characteristic.writeValue(encoder.encode(data));
+            // 自动扫描所有可用服务
+            log("扫描可用通道...");
+            const services = await server.getPrimaryServices();
+            log("发现服务数: " + services.length);
 
-            log("✅ 打印完成！出纸了吗？");
+            let targetChar = null;
+            for (const s of services) {
+                log("检查服务: " + s.uuid);
+                const chars = await s.getCharacteristics();
+                const found = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+                if (found) {
+                    targetChar = found;
+                    log("找到写入通道: " + found.uuid);
+                    break;
+                }
+            }
+
+            if (!targetChar) throw new Error("未找到打印通道");
+
+            log("发送测试数据...");
+            const data = new Uint8Array([0x1B, 0x40, 0x0A, 0x59, 0x65, 0x59, 0x65, 0x4B, 0x61, 0x6F, 0x20, 0x4F, 0x4B, 0x21, 0x0A, 0x0A, 0x0A, 0x0A]);
+            await targetChar.writeValue(data);
+            log("✅ 打印完成！");
 
         } catch (error) {
             log("❌ 失败: " + error.message);
-            log("提示：如果还是 No Services，请确认打印机没有被手机 App 连着。");
+            if (error.message.includes("Unsupported device")) {
+                log("\n【核心提示】: 你的 Mac 系统目前正连着这台打印机。请去『系统设置-蓝牙』里彻底『忽略』此设备，然后刷新网页重试！");
+            }
         }
     });
 </script>
